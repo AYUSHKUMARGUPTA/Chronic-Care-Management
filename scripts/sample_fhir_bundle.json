@@ -1,0 +1,29 @@
+{
+  "patient": {
+    "external_id": "synthea-002",
+    "full_name": "Taylor Smith",
+    "birth_date": "1982-04-12",
+    "gender": "female"
+  },
+  "conditions": [
+    {
+      "code": "38341003",
+      "display": "Hypertensive disorder, systemic arterial",
+      "clinical_status": "active"
+    }
+  ],
+  "medications": [
+    {
+      "code": "860975",
+      "display": "Amlodipine 5 MG Oral Tablet",
+      "status": "active"
+    }
+  ],
+  "observations": [
+    {
+      "systolic": 148,
+      "diastolic": 92,
+      "observed_on": "2026-03-20"
+    }
+  ]
+}
