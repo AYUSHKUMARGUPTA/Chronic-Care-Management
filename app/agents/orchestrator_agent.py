@@ -8,7 +8,7 @@ from app.models.alert import Alert
 from app.services.patient_context import PatientContextService
 from app.memory.context_store import save_memory
 from app.api.websocket import broadcast_alert
-from app.services.fhir_repository import observations_for_patient
+from app.services.fhir_repository import medications_for_patient, observations_for_patient
 
 
 class OrchestratorAgent:
@@ -25,8 +25,9 @@ class OrchestratorAgent:
 
     def run_for_patient(self, db: Session, patient_id: str) -> List[Alert]:
         observations = observations_for_patient(db, patient_id)
+        medications = medications_for_patient(db, patient_id)
 
-        findings = self.monitor.evaluate(observations)
+        findings = self.monitor.evaluate(observations, medications)
 
         # Build context and persist snapshot
         context = self.context_service.build_context(db, patient_id)
