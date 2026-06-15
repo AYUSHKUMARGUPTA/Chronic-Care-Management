@@ -81,8 +81,52 @@ class GPTClient:
         return json.dumps(parsed)
 
     def _summary_prompt(self, context: Dict[str, Any], findings: List[Dict[str, Any]]) -> str:
+        ctx = context.get("context", {})
+        last_bp: str = ctx.get("last_bp", "unknown")
+        last_visit: str = str(ctx.get("last_visit", "unknown"))
+        conditions: list = ctx.get("conditions", [])
+        active_meds: list = ctx.get("active_medications", [])
+
+        _COMORBIDITY_KEYWORDS = {
+            "obesity": "obesity",
+            "prediabetes": "prediabetes",
+            "diabetes mellitus": "diabetes mellitus",
+            "stroke": "prior stroke/TIA",
+            "transient ischemic": "prior stroke/TIA",
+            "chronic kidney": "CKD",
+            "ischemic heart": "ischemic heart disease",
+            "heart failure": "heart failure",
+            "atrial fibrillation": "atrial fibrillation",
+        }
+        flagged: list[str] = []
+        for cond in conditions:
+            for keyword, label in _COMORBIDITY_KEYWORDS.items():
+                if keyword in cond and label not in flagged:
+                    flagged.append(label)
+
+        comorbidity_line = ", ".join(flagged) if flagged else "none identified"
+        meds_line = "; ".join(active_meds) if active_meds else "none on record"
+        finding_lines = "\n".join(
+            f"  [{f.get('type', '?')} / {f.get('severity', '?')}] {f.get('message', '')}"
+            for f in findings
+        ) or "  none"
+
         return (
-            f"Patient context JSON:\n{json.dumps(context, default=str)}\n\n"
-            f"Monitoring findings JSON:\n{json.dumps(findings, default=str)}\n\n"
-            "You are a clinical reasoning assistant. Return only a concise 1-2 sentence clinician-facing summary."
+            "You are a clinical reasoning assistant supporting a hypertension care-gap portal.\n"
+            "Apply AHA/ACC 2017 guidelines: Stage 1 HTN ≥130/80 mmHg, Stage 2 HTN ≥140/90 mmHg.\n"
+            "JNC 8 first-line drug classes: thiazide diuretics, ACE inhibitors, ARBs, calcium channel blockers.\n\n"
+            "--- Patient Data ---\n"
+            f"Last recorded BP : {last_bp} mmHg\n"
+            f"Last visit       : {last_visit}\n"
+            f"Active medications: {meds_line}\n"
+            f"Relevant comorbidities: {comorbidity_line}\n\n"
+            "--- Monitoring Findings ---\n"
+            f"{finding_lines}\n\n"
+            "--- Instructions ---\n"
+            "1. Classify the BP gap as one of: UNTREATED (no antihypertensive on record) or "
+            "TREATED-BUT-UNCONTROLLED (on antihypertensive therapy, BP still at Stage 1 or Stage 2).\n"
+            "2. If a WORSENING BP_TREND finding is present, note the trajectory explicitly.\n"
+            "3. Name up to two comorbidities from the list above that most elevate cardiovascular risk.\n"
+            "4. Return ONLY a concise 2-3 sentence clinician-facing summary. "
+            "No bullet points. No headers. Clinical language only."
         )

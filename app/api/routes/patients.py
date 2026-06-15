@@ -11,7 +11,9 @@ from app.services.fhir_repository import (
     get_patient_row,
     list_hypertension_condition_rows,
     list_latest_bp_per_patient,
+    list_medications_for_patient_ids,
     get_patient_rows_for_ids,
+    medications_for_patient,
     observations_for_patient,
 )
 from app.services.patient_context import PatientContextService
@@ -27,7 +29,9 @@ def _risk_from_findings(findings: list[dict]) -> str:
         return "LOW"
     if any(f.get("severity") == "HIGH" for f in findings):
         return "HIGH"
-    return "MEDIUM"
+    if any(f.get("severity") == "MEDIUM" for f in findings):
+        return "MEDIUM"
+    return "LOW"
 
 
 @router.get("", response_model=list[PatientOut])
@@ -53,7 +57,9 @@ def get_patient_summary(patient_id: str, db: Session = Depends(get_db)):
 
     context = context_service.build_context(db, patient_id)
     alerts = alert_service.list_alerts_for_patient(db, patient_id)
-    findings = monitoring_agent.evaluate(observations_for_patient(db, patient_id))
+    observations = observations_for_patient(db, patient_id)
+    medications = medications_for_patient(db, patient_id)
+    findings = monitoring_agent.evaluate(observations, medications)
     # Instantiate the ReasoningAgent lazily so the dashboard load path
     # doesn't import or call the online LLM until a clinician requests
     # a patient summary by clicking on the patient.
@@ -99,6 +105,13 @@ def get_clinician_dashboard(db: Session = Depends(get_db)):
         if pid:
             observations_by_patient[pid].append(obs)
 
+    all_medications = list_medications_for_patient_ids(db, hyp_patient_ids)
+    medications_by_patient: dict[str, list[dict]] = defaultdict(list)
+    for med in all_medications:
+        pid = med.get("patient_id")
+        if pid:
+            medications_by_patient[pid].append(med)
+
     all_alerts = alert_service.list_alerts(db)
     alerts_by_patient: dict[str, list[dict]] = defaultdict(list)
     for alert in all_alerts:
@@ -111,9 +124,10 @@ def get_clinician_dashboard(db: Session = Depends(get_db)):
         pid = patient["patient_id"]
         conditions = conditions_by_patient.get(pid, [])
         observations = observations_by_patient.get(pid, [])
-        context = context_service.build_context_from_records(pid, conditions, observations)
+        medications = medications_by_patient.get(pid, [])
+        context = context_service.build_context_from_records(pid, conditions, observations, medications)
         alerts = alerts_by_patient.get(pid, [])
-        findings = monitoring_agent.evaluate(observations)
+        findings = monitoring_agent.evaluate(observations, medications)
         cards.append(
             ClinicianPatientCard(
                 patient_id=pid,

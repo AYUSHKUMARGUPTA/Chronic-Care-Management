@@ -214,6 +214,22 @@ def list_hypertension_condition_rows(db: Session) -> list[dict[str, Any]]:
     return result
 
 
+def list_medications_for_patient_ids(db: Session, patient_ids: set[str]) -> list[dict[str, Any]]:
+    if not patient_ids:
+        return []
+    refs = [f"Patient/{pid}" for pid in patient_ids]
+    rows = db.execute(
+        text("""
+            SELECT resource_id, data
+            FROM fhir_medicationrequest
+            WHERE data->'subject'->>'reference' = ANY(:refs)
+            ORDER BY resource_id
+        """),
+        {"refs": refs},
+    ).mappings().all()
+    return [parse_medication_row(dict(row)) for row in rows]
+
+
 def get_patient_rows_for_ids(db: Session, patient_ids: set[str]) -> list[dict[str, Any]]:
     if not patient_ids:
         return []
@@ -230,23 +246,32 @@ def get_patient_rows_for_ids(db: Session, patient_ids: set[str]) -> list[dict[st
 def list_latest_bp_per_patient(
     db: Session, patient_ids: set[str]
 ) -> list[dict[str, Any]]:
-    """Return the single latest BP reading per patient from the pre-computed view.
+    """Return up to the 3 most recent BP readings per patient.
 
-    mv_bp_readings holds pre-extracted systolic/diastolic values so this query
-    never touches the large fhir_observation JSONB heap.
+    3 readings are needed for the BP trend check in MonitoringAgent; returning
+    only 1 caused the dashboard and detail view to disagree on risk level.
+    mv_bp_readings holds pre-extracted values so this never touches the JSONB heap.
     """
     if not patient_ids:
         return []
     refs = [f"Patient/{pid}" for pid in patient_ids]
     rows = db.execute(
         text("""
-            SELECT DISTINCT ON (patient_ref)
-                patient_ref, observed_on, systolic, diastolic
-            FROM mv_bp_readings
-            WHERE patient_ref = ANY(:refs)
-              AND systolic IS NOT NULL
-              AND diastolic IS NOT NULL
-            ORDER BY patient_ref, observed_on DESC NULLS LAST
+            SELECT patient_ref, observed_on, systolic, diastolic
+            FROM (
+                SELECT
+                    patient_ref, observed_on, systolic, diastolic,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY patient_ref
+                        ORDER BY observed_on DESC NULLS LAST
+                    ) AS rn
+                FROM mv_bp_readings
+                WHERE patient_ref = ANY(:refs)
+                  AND systolic IS NOT NULL
+                  AND diastolic IS NOT NULL
+            ) ranked
+            WHERE rn <= 3
+            ORDER BY patient_ref, observed_on
         """),
         {"refs": refs},
     ).mappings().all()
